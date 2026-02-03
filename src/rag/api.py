@@ -7,6 +7,7 @@ from rag.chain import answer
 from rag.chunker import chunk_documents
 from rag.document_loader import Document, load_file, load_url
 from rag.models import (
+    Citation,
     IngestResponse,
     IngestURLRequest,
     QueryRequest,
@@ -69,10 +70,21 @@ def ingest_urls(request: IngestURLRequest):
 
 @app.post("/query", response_model=QueryResponse)
 def query_documents(request: QueryRequest):
-    response_text, source_docs = answer(request.question, top_k=request.top_k)
+    response_text, citation_idxs, source_docs = answer(
+        request.question, top_k=request.top_k
+    )
 
-    sources = [
-        Source(content=doc.content, metadata=doc.metadata) for doc in source_docs
-    ]
+    sources = [Source(content=doc.content, metadata=doc.metadata) for doc in source_docs]
 
-    return QueryResponse(answer=response_text, sources=sources)
+    citations: list[Citation] = []
+    for idx in citation_idxs:
+        doc = source_docs[idx - 1]
+        citations.append(
+            Citation(
+                source=doc.metadata.get("source"),
+                page=doc.metadata.get("page"),
+                chunk_index=doc.metadata.get("chunk_index"),
+            )
+        )
+
+    return QueryResponse(answer=response_text, citations=citations, sources=sources)

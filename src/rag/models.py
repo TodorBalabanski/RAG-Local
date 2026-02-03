@@ -11,8 +11,15 @@ class Source(BaseModel):
     metadata: dict
 
 
+class Citation(BaseModel):
+    source: str | None = None
+    page: int | None = None
+    chunk_index: int | None = None
+
+
 class QueryResponse(BaseModel):
     answer: str
+    citations: list[Citation]
     sources: list[Source]
 
 
