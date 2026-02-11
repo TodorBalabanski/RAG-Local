@@ -79,5 +79,7 @@ def query_with_scores(
     for i in range(min(len(docs), len(metas))):
         dist = dists[i] if i < len(dists) else None
         emb = embs[i] if i < len(embs) else None
+        if hasattr(emb, "tolist"):
+            emb = emb.tolist()
         out.append(SearchResult(Document(content=docs[i], metadata=metas[i]), dist, emb))
     return out

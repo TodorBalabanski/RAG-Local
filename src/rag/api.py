@@ -2,7 +2,10 @@ import json
 import tempfile
 from pathlib import Path
 
-from fastapi import FastAPI, HTTPException, UploadFile
+import asyncio
+
+import anyio
+from fastapi import FastAPI, HTTPException, Request, UploadFile
 from fastapi.responses import StreamingResponse
 
 from rag.chain import answer, answer_stream
@@ -93,51 +96,73 @@ def query_documents(request: QueryRequest):
 
 
 @app.post("/query/stream")
-def query_documents_stream(request: QueryRequest):
+def query_documents_stream(payload: QueryRequest, request: Request):
     """Server-Sent Events (SSE) streaming endpoint.
 
     Events:
       - event: delta   data: <text chunk>
       - event: result  data: <final JSON result>
 
-    The model is instructed to output JSON; we stream raw deltas and parse at the end.
+    Notes:
+    - We handle client disconnects gracefully (common cause of noisy ASGI ExceptionGroups).
+    - The model is instructed to output JSON; we stream raw deltas and parse at the end.
     """
 
-    def sse():
+    async def sse():
         buffer = ""
         last_docs = []
-        for delta, docs in answer_stream(request.question, top_k=request.top_k):
-            last_docs = docs
-            buffer += delta
-            yield f"event: delta\ndata: {json.dumps(delta)}\n\n"
-
-        # best-effort parse
         try:
-            data = json.loads(buffer)
-        except Exception:
-            data = {"answer": buffer.strip(), "citations": []}
+            for delta, docs in answer_stream(payload.question, top_k=payload.top_k):
+                if await request.is_disconnected():
+                    return
+                last_docs = docs
+                buffer += delta
+                yield f"event: delta\ndata: {json.dumps(delta)}\n\n"
+                # give the event loop a chance to flush
+                await asyncio.sleep(0)
 
-        citations_raw = data.get("citations", [])
-        citation_idxs = [c for c in citations_raw if isinstance(c, int)]
+            # best-effort parse
+            try:
+                data = json.loads(buffer)
+            except Exception:
+                data = {"answer": buffer.strip(), "citations": []}
 
-        sources = [Source(content=doc.content, metadata=doc.metadata).model_dump() for doc in last_docs]
-        citations: list[dict] = []
-        for idx in citation_idxs:
-            if 1 <= idx <= len(last_docs):
-                doc = last_docs[idx - 1]
-                citations.append(
-                    Citation(
-                        source=doc.metadata.get("source"),
-                        page=doc.metadata.get("page"),
-                        chunk_index=doc.metadata.get("chunk_index"),
-                    ).model_dump()
-                )
+            citations_raw = data.get("citations", [])
+            citation_idxs = [c for c in citations_raw if isinstance(c, int)]
 
-        payload = {
-            "answer": str(data.get("answer", "")).strip(),
-            "citations": citations,
-            "sources": sources,
-        }
-        yield f"event: result\ndata: {json.dumps(payload)}\n\n"
+            sources = [
+                Source(content=doc.content, metadata=doc.metadata).model_dump()
+                for doc in last_docs
+            ]
+            citations: list[dict] = []
+            for idx in citation_idxs:
+                if 1 <= idx <= len(last_docs):
+                    doc = last_docs[idx - 1]
+                    citations.append(
+                        Citation(
+                            source=doc.metadata.get("source"),
+                            page=doc.metadata.get("page"),
+                            chunk_index=doc.metadata.get("chunk_index"),
+                        ).model_dump()
+                    )
 
-    return StreamingResponse(sse(), media_type="text/event-stream")
+            result = {
+                "answer": str(data.get("answer", "")).strip(),
+                "citations": citations,
+                "sources": sources,
+            }
+            yield f"event: result\ndata: {json.dumps(result)}\n\n"
+
+        except (asyncio.CancelledError, anyio.get_cancelled_exc_class()):
+            # client disconnected / request cancelled
+            return
+
+    return StreamingResponse(
+        sse(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no",
+        },
+    )
