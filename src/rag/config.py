@@ -4,6 +4,8 @@ from pydantic_settings import BaseSettings
 
 
 class Settings(BaseSettings):
+    # Note: pydantic-settings maps env vars by field name (uppercased).
+    # e.g. fetch_k <- FETCH_K, use_mmr <- USE_MMR
     # Generation
     llm_provider: Literal["anthropic", "openai"] = "anthropic"
 
@@ -26,9 +28,20 @@ class Settings(BaseSettings):
     # Vector store / retrieval
     chroma_persist_dir: str = "./chroma_db"
     chroma_collection: str = "documents"
+
+    # How many chunks to return to the answer chain (after reranking/diversification)
     top_k: int = 5
-    # Optional: fetch more candidates than you return, for reranking.
-    fetch_k: int = 25
+
+    # Fetch more candidates than we return, then rerank/diversify.
+    fetch_k: int = 25  # env: FETCH_K
+
+    # Optional quality knobs
+    # - If set, drop candidates with cosine *distance* > max_distance (lower is better)
+    max_distance: float | None = None
+
+    # Enable MMR (diversity) before LLM reranking.
+    use_mmr: bool = True
+    mmr_lambda: float = 0.7  # 0..1, higher = more relevance, lower = more diversity
 
     model_config = {"env_file": ".env"}
 

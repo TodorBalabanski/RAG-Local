@@ -5,7 +5,7 @@ A REST API for ingesting documents (files and URLs), storing them in a vector da
 ## Features
 
 - **Document ingestion** from files (PDF, TXT, MD, CSV) and URLs
-- **Vector search** using ChromaDB with sentence-transformer embeddings
+- **Vector search** using ChromaDB with sentence-transformer or OpenAI embeddings
 - **Multi-provider LLM support** - Anthropic Claude and OpenAI
 - **Source citations** returned with every answer
 
@@ -40,7 +40,8 @@ cp .env.example .env
 | `OPENAI_MODEL` | OpenAI model name | `gpt-4o` |
 | `CHUNK_SIZE` | Text chunk size in characters | `1000` |
 | `CHUNK_OVERLAP` | Overlap between chunks | `200` |
-| `EMBEDDING_MODEL` | Sentence transformer model | `all-MiniLM-L6-v2` |
+| `EMBEDDING_PROVIDER` | `sentence_transformers` or `openai` | `sentence_transformers` |
+| `EMBEDDING_MODEL` | Embedding model (ST or OpenAI) | `all-MiniLM-L6-v2` |
 | `CHROMA_PERSIST_DIR` | ChromaDB storage path | `./chroma_db` |
 | `TOP_K` | Number of documents to retrieve | `5` |
 
@@ -88,6 +89,21 @@ curl -X POST http://localhost:8000/query \
 ```
 
 Returns an answer with source citations.
+
+### `POST /query/stream` (SSE)
+
+Stream the answer as **Server-Sent Events**.
+
+- Emits many `delta` events (raw text chunks from the model)
+- Finishes with a single `result` event containing JSON `{answer, citations, sources}`
+
+Example (prints the stream):
+
+```bash
+curl -N -X POST http://localhost:8000/query/stream \
+  -H "Content-Type: application/json" \
+  -d '{"question": "What is...", "top_k": 5}'
+```
 
 ## Project Structure
 

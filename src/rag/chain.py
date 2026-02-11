@@ -56,3 +56,21 @@ def answer(question: str, top_k: int | None = None) -> tuple[str, list[int], lis
     citations = [c for c in citations if not (c in seen or seen.add(c))]
 
     return response_text, citations, documents
+
+
+def answer_stream(question: str, top_k: int | None = None):
+    """Yield (delta, documents) pairs while the model is generating.
+
+    Notes:
+    - The streamed deltas are raw text (the model is still asked to output JSON).
+    - Caller should buffer deltas and parse JSON at the end.
+    """
+
+    from rag.llm import stream as llm_stream
+
+    documents = retrieve(question, top_k=top_k)
+    context = build_context(documents)
+    user_message = USER_TEMPLATE.format(context=context, question=question)
+
+    for delta in llm_stream(SYSTEM_PROMPT, user_message):
+        yield delta, documents

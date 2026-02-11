@@ -39,6 +39,42 @@ def generate(system_prompt: str, user_message: str) -> str:
     return _generate_anthropic(system_prompt, user_message)
 
 
+def stream(system_prompt: str, user_message: str):
+    """Yield text deltas from the selected provider."""
+
+    if settings.llm_provider == "openai":
+        from openai import OpenAI
+
+        client = OpenAI(api_key=settings.openai_api_key)
+        resp = client.chat.completions.create(
+            model=settings.openai_model,
+            stream=True,
+            messages=[
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": user_message},
+            ],
+        )
+        for event in resp:
+            delta = event.choices[0].delta
+            text = getattr(delta, "content", None)
+            if text:
+                yield text
+        return
+
+    import anthropic
+
+    client = anthropic.Anthropic(api_key=settings.anthropic_api_key)
+    with client.messages.stream(
+        model=settings.claude_model,
+        max_tokens=4096,
+        system=system_prompt,
+        messages=[{"role": "user", "content": user_message}],
+    ) as stream_resp:
+        for text in stream_resp.text_stream:
+            if text:
+                yield text
+
+
 def generate_json(system_prompt: str, user_message: str) -> dict[str, Any]:
     """Best-effort JSON generation.
 

@@ -17,10 +17,12 @@ def _format_candidates(docs: list[Document], max_chars: int = 900) -> str:
         source = d.metadata.get("source", "unknown")
         page = d.metadata.get("page")
         page_txt = f", page {page}" if page else ""
+        dist = d.metadata.get("distance")
+        dist_txt = f", dist {dist:.4f}" if isinstance(dist, (int, float)) else ""
         text = (d.content or "").strip().replace("\n", " ")
         if len(text) > max_chars:
             text = text[:max_chars] + "…"
-        parts.append(f"[{i}] (source: {source}{page_txt}) {text}")
+        parts.append(f"[{i}] (source: {source}{page_txt}{dist_txt}) {text}")
     return "\n".join(parts)
 
 

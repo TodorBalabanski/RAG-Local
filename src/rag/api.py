@@ -1,9 +1,11 @@
+import json
 import tempfile
 from pathlib import Path
 
 from fastapi import FastAPI, HTTPException, UploadFile
+from fastapi.responses import StreamingResponse
 
-from rag.chain import answer
+from rag.chain import answer, answer_stream
 from rag.chunker import chunk_documents
 from rag.document_loader import Document, load_file, load_url
 from rag.models import (
@@ -88,3 +90,54 @@ def query_documents(request: QueryRequest):
         )
 
     return QueryResponse(answer=response_text, citations=citations, sources=sources)
+
+
+@app.post("/query/stream")
+def query_documents_stream(request: QueryRequest):
+    """Server-Sent Events (SSE) streaming endpoint.
+
+    Events:
+      - event: delta   data: <text chunk>
+      - event: result  data: <final JSON result>
+
+    The model is instructed to output JSON; we stream raw deltas and parse at the end.
+    """
+
+    def sse():
+        buffer = ""
+        last_docs = []
+        for delta, docs in answer_stream(request.question, top_k=request.top_k):
+            last_docs = docs
+            buffer += delta
+            yield f"event: delta\ndata: {json.dumps(delta)}\n\n"
+
+        # best-effort parse
+        try:
+            data = json.loads(buffer)
+        except Exception:
+            data = {"answer": buffer.strip(), "citations": []}
+
+        citations_raw = data.get("citations", [])
+        citation_idxs = [c for c in citations_raw if isinstance(c, int)]
+
+        sources = [Source(content=doc.content, metadata=doc.metadata).model_dump() for doc in last_docs]
+        citations: list[dict] = []
+        for idx in citation_idxs:
+            if 1 <= idx <= len(last_docs):
+                doc = last_docs[idx - 1]
+                citations.append(
+                    Citation(
+                        source=doc.metadata.get("source"),
+                        page=doc.metadata.get("page"),
+                        chunk_index=doc.metadata.get("chunk_index"),
+                    ).model_dump()
+                )
+
+        payload = {
+            "answer": str(data.get("answer", "")).strip(),
+            "citations": citations,
+            "sources": sources,
+        }
+        yield f"event: result\ndata: {json.dumps(payload)}\n\n"
+
+    return StreamingResponse(sse(), media_type="text/event-stream")

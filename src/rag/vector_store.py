@@ -1,4 +1,5 @@
 import uuid
+from dataclasses import dataclass
 from functools import lru_cache
 
 import chromadb
@@ -6,6 +7,13 @@ import chromadb
 from rag.config import settings
 from rag.document_loader import Document
 from rag.embeddings import embed_texts
+
+
+@dataclass
+class SearchResult:
+    document: Document
+    distance: float | None = None  # cosine distance (lower is better)
+    embedding: list[float] | None = None
 
 
 @lru_cache(maxsize=1)
@@ -48,14 +56,28 @@ def add_documents(documents: list[Document]) -> int:
 
 
 def query(query_embedding: list[float], top_k: int = settings.top_k) -> list[Document]:
+    """Backward-compatible query (documents only)."""
+    return [r.document for r in query_with_scores(query_embedding, top_k=top_k)]
+
+
+def query_with_scores(
+    query_embedding: list[float], top_k: int = settings.top_k
+) -> list[SearchResult]:
     collection = get_collection()
     results = collection.query(
         query_embeddings=[query_embedding],
         n_results=top_k,
-        include=["documents", "metadatas", "distances"],
+        include=["documents", "metadatas", "distances", "embeddings"],
     )
 
-    documents = []
-    for doc, meta in zip(results["documents"][0], results["metadatas"][0]):
-        documents.append(Document(content=doc, metadata=meta))
-    return documents
+    docs = results.get("documents", [[]])[0]
+    metas = results.get("metadatas", [[]])[0]
+    dists = results.get("distances", [[]])[0]
+    embs = results.get("embeddings", [[]])[0]
+
+    out: list[SearchResult] = []
+    for i in range(min(len(docs), len(metas))):
+        dist = dists[i] if i < len(dists) else None
+        emb = embs[i] if i < len(embs) else None
+        out.append(SearchResult(Document(content=docs[i], metadata=metas[i]), dist, emb))
+    return out
